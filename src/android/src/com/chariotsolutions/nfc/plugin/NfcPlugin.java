@@ -12,6 +12,7 @@ import android.os.Parcelable;
 import android.util.Log;
 import org.apache.cordova.api.CallbackContext;
 import org.apache.cordova.api.CordovaPlugin;
+import org.apache.cordova.api.PluginResult;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -19,7 +20,9 @@ import org.json.JSONObject;
 import java.io.IOException;
 import java.text.MessageFormat;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class NfcPlugin extends CordovaPlugin {
     private static final String REGISTER_MIME_TYPE = "registerMimeType";
@@ -50,6 +53,8 @@ public class NfcPlugin extends CordovaPlugin {
     private PendingIntent pendingIntent = null;
 
     private Intent savedIntent = null;
+
+    private Map<String, CallbackContext> mimeTypeCallbacks = new HashMap<String, CallbackContext>();
 
     @Override
     public boolean execute(String action, JSONArray data, CallbackContext callbackContext) throws JSONException {
@@ -145,7 +150,7 @@ public class NfcPlugin extends CordovaPlugin {
         try {
             mimeType = data.getString(0);
             intentFilters.add(createIntentFilter(mimeType));
-            callbackContext.success();
+            mimeTypeCallbacks.put(mimeType, callbackContext);
         } catch (MalformedMimeTypeException e) {
             callbackContext.error("Invalid MIME Type " + mimeType);
         }
@@ -284,9 +289,9 @@ public class NfcPlugin extends CordovaPlugin {
 
                 if (nfcAdapter == null) {
                     callbackContext.error(STATUS_NO_NFC);
-                // isNdefPushEnabled would be nice, but requires android-17
-                //} else if (!nfcAdapter.isNdefPushEnabled()) {
-                //    callbackContext.error(STATUS_NDEF_PUSH_DISABLED);
+                    // isNdefPushEnabled would be nice, but requires android-17
+                    //} else if (!nfcAdapter.isNdefPushEnabled()) {
+                    //    callbackContext.error(STATUS_NDEF_PUSH_DISABLED);
                 } else {
                     nfcAdapter.setNdefPushMessage(p2pMessage, getActivity());
                     callbackContext.success();
@@ -349,7 +354,8 @@ public class NfcPlugin extends CordovaPlugin {
 
                 if (action.equals(NfcAdapter.ACTION_NDEF_DISCOVERED)) {
                     Ndef ndef = Ndef.get(tag);
-                    fireNdefEvent(NDEF_MIME, ndef, messages);
+                    //fireNdefEvent(NDEF_MIME, ndef, messages);
+                    fireMimeTypeEvent(ndef, messages);
 
                 } else if (action.equals(NfcAdapter.ACTION_TECH_DISCOVERED)) {
                     for (String tagTech : tag.getTechList()) {
@@ -372,6 +378,20 @@ public class NfcPlugin extends CordovaPlugin {
         });
     }
 
+    private void fireMimeTypeEvent(Ndef ndef, Parcelable[] messages) {
+
+        JSONObject jsonObject = buildNdefJSON(ndef, messages);
+
+        // get the mime type from the first record in the tag
+        NdefMessage message = (NdefMessage) messages[0]; // TODO handle no messages
+        String mimeType = new String(message.getRecords()[0].getType()); // TODO handle no records
+
+        CallbackContext callback = mimeTypeCallbacks.get(mimeType); // TODO handle failure
+        PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, jsonObject);
+        pluginResult.setKeepCallback(true);
+        callback.sendPluginResult(pluginResult);
+    }
+
     private void fireNdefEvent(String type, Ndef ndef, Parcelable[] messages) {
 
         JSONObject jsonObject = buildNdefJSON(ndef, messages);
@@ -380,7 +400,6 @@ public class NfcPlugin extends CordovaPlugin {
         String command = MessageFormat.format(javaScriptEventTemplate, type, tag);
         Log.v(TAG, command);
         this.webView.sendJavascript(command);
-
     }
 
     private void fireNdefFormatableEvent (Tag tag) {
